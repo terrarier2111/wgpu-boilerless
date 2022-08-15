@@ -1,2 +1,2 @@
 # wgpu-boilerless
-Use WGPU but without biolerplate
+Use WGPU for your graphical application but without biolerplate
