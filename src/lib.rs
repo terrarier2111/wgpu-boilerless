@@ -63,10 +63,13 @@ impl State {
                 )
                 .await?;
 
-            let pref_format = surface.get_supported_formats(&adapter)[0];
+            // use the specified format, if none is provided, fallback to the preferred format
+            let format = builder
+                .format
+                .unwrap_or_else(|| surface.get_supported_formats(&adapter)[0]);
             let config = SurfaceConfiguration {
                 usage: TextureUsages::RENDER_ATTACHMENT,
-                format: pref_format,
+                format,
                 width: size.0,
                 height: size.0,
                 present_mode: builder.present_mode,
@@ -162,10 +165,9 @@ impl State {
         }
     }
 
-    /// Initiates the rendering process, the passed callback gets
-    /// called once all the required state is set up and
-    /// once it ran, all the required steps to proceed get executed
-    pub fn render<F: FnOnce(TextureView, CommandEncoder, &State) -> CommandEncoder>(
+    /// This does the same thing as `render_to_view` but we render to
+    /// a texture we acquired from the surface.
+    pub fn render<F: FnOnce(&TextureView, CommandEncoder, &State) -> CommandEncoder>(
         &self,
         callback: F,
     ) -> Result<(), SurfaceError> {
@@ -176,6 +178,26 @@ impl State {
             .texture
             .create_view(&mut TextureViewDescriptor::default()); // FIXME: do we need a way to parameterize this?
 
+        self.render_to_view(callback, &view)?;
+
+        output.present();
+        self.surface_texture_alive.store(false, Ordering::Release);
+
+        Ok(())
+    }
+
+    /// Initiates the rendering process, the passed callback gets
+    /// called once all the required state is set up and
+    /// once it ran, all the required steps to proceed get executed.
+    ///
+    /// *Note*: specifying a view might be useful if your renderer
+    /// interacts with a texture provided by another application
+    /// or you want to generate an image.
+    pub fn render_to_view<F: FnOnce(&TextureView, CommandEncoder, &State) -> CommandEncoder>(
+        &self,
+        callback: F,
+        view: &TextureView,
+    ) -> Result<(), SurfaceError> {
         let encoder = self
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
@@ -183,9 +205,6 @@ impl State {
         let encoder = callback(view, encoder, self);
 
         self.queue.submit(once(encoder.finish()));
-        output.present();
-        self.surface_texture_alive.store(false, Ordering::Release);
-
         Ok(())
     }
 
@@ -229,7 +248,7 @@ impl State {
     }
 
     /// Updates the present mode of the surface
-    /// Note: this function will wait until the render call has finished
+    /// *Note*: this function will wait until the render call has finished
     pub fn update_present_mode(&self, present_mode: PresentMode) {
         while !self.try_update_present_mode(present_mode) {
             // do nothing, as we just want to update the present mode
@@ -619,7 +638,7 @@ impl<'a> TextureBuilder<'a> {
     }
 
     /// The default value is TextureUsages::TEXTURE_BINDING
-    /// NOTE: TextureUsages::COPY_DST gets appended to the usages
+    /// *Note*: TextureUsages::COPY_DST gets appended to the usages
     pub fn usages(mut self, usages: TextureUsages) -> Self {
         self.usages = usages | TextureUsages::COPY_DST;
         self
@@ -665,6 +684,7 @@ pub struct StateBuilder<T: WindowSize> {
     present_mode: PresentMode,        // we have a default
     requirements: DeviceRequirements, // we have a default
     backends: Backends,               // we have a default
+    format: Option<TextureFormat>,    // we have a default
 }
 
 impl<T: WindowSize> Default for StateBuilder<T> {
@@ -675,6 +695,7 @@ impl<T: WindowSize> Default for StateBuilder<T> {
             power_pref: Default::default(),
             present_mode: Default::default(),
             requirements: Default::default(),
+            format: None,
         }
     }
 }
@@ -716,6 +737,16 @@ impl<T: WindowSize> StateBuilder<T> {
     #[inline]
     pub fn backends(mut self, backends: Backends) -> Self {
         self.backends = backends;
+        self
+    }
+
+    /// The default is to use the preferred format
+    /// *Note*: This might be useful when you don't have control over the
+    /// pipelines provided to you but you can specify a default.
+    /// This method may be deprecated in the future.
+    #[inline]
+    pub fn format(mut self, format: TextureFormat) -> Self {
+        self.format = Some(format);
         self
     }
 
