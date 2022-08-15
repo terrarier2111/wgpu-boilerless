@@ -32,6 +32,10 @@ pub struct State {
 }
 
 impl State {
+    /// Tries to create a new `State` from a `StateBuilder`
+    ///
+    /// returns either the newly created state or an error if
+    /// requesting an adapter or device fails.
     pub async fn new<T: WindowSize>(builder: StateBuilder<T>) -> anyhow::Result<Self> {
         let window = builder
             .window
@@ -81,6 +85,8 @@ impl State {
         Err(AnyError::from(NoSuitableAdapterFoundError))
     }
 
+    /// Creates a new pipeline layout from its bind group layouts and
+    /// its push constant ranges
     pub fn create_pipeline_layout(
         &self,
         bind_group_layouts: &[&BindGroupLayout],
@@ -94,6 +100,7 @@ impl State {
             })
     }
 
+    /// Helper method to create a pipeline from its builder
     pub fn create_pipeline(&self, builder: PipelineBuilder<'_>) -> RenderPipeline {
         let shaders = builder
             .shader_sources
@@ -132,7 +139,7 @@ impl State {
             })
     }
 
-    /// creates a shader module from its src
+    /// Creates a shader module from its src
     pub fn create_shader(&self, src: ShaderSource<'_>) -> ShaderModule {
         self.device.create_shader_module(ShaderModuleDescriptor {
             label: None,
@@ -140,7 +147,7 @@ impl State {
         })
     }
 
-    /// returns whether the resizing succeeded or not
+    /// Returns whether the resizing succeeded or not
     pub fn resize(&self, size: impl Into<(u32, u32)>) -> bool {
         let size = size.into();
         if size.0 > 0 && size.1 > 0 {
@@ -155,6 +162,9 @@ impl State {
         }
     }
 
+    /// Initiates the rendering process, the passed callback gets
+    /// called once all the required state is set up and
+    /// once it ran, all the required steps to proceed get executed
     pub fn render<F: FnOnce(TextureView, CommandEncoder, &State) -> CommandEncoder>(
         &self,
         callback: F,
@@ -179,7 +189,7 @@ impl State {
         Ok(())
     }
 
-    /// creates a render pass in the encoder
+    /// Helper method to create a render pass in the encoder
     pub fn create_render_pass<'a>(
         &self,
         encoder: &'a mut CommandEncoder,
@@ -193,20 +203,20 @@ impl State {
         })
     }
 
-    /// returns the size defined in the config
+    /// Returns the size defined in the config
     pub fn size(&self) -> (u32, u32) {
         let config = self.config.read();
         (config.width, config.height)
     }
 
-    /// returns the format defined in the config
+    /// Returns the format defined in the config
     pub fn format(&self) -> TextureFormat {
         let config = self.config.read();
         config.format.clone()
     }
 
-    /// tries to update the present mode of the surface.
-    /// returns whether update succeeded or not
+    /// Tries to update the present mode of the surface.
+    /// Returns whether update succeeded or not
     pub fn try_update_present_mode(&self, present_mode: PresentMode) -> bool {
         if !self.surface_texture_alive.load(Ordering::Acquire) {
             let mut config = self.config.write();
@@ -218,39 +228,40 @@ impl State {
         }
     }
 
-    /// updates the present mode of the surface
-    /// note: this function will wait until the render call has finished
+    /// Updates the present mode of the surface
+    /// Note: this function will wait until the render call has finished
     pub fn update_present_mode(&self, present_mode: PresentMode) {
         while !self.try_update_present_mode(present_mode) {
             // do nothing, as we just want to update the present mode
         }
     }
 
-    /// returns a reference to the device
+    /// Returns a reference to the device
     #[inline(always)]
     pub const fn device(&self) -> &Device {
         &self.device
     }
 
-    /// returns a reference to the queue
+    /// Returns a reference to the queue
     #[inline(always)]
     pub const fn queue(&self) -> &Queue {
         &self.queue
     }
 
-    /// returns a reference to the surface
+    /// Returns a reference to the surface
     #[inline(always)]
     pub const fn surface(&self) -> &Surface {
         &self.surface
     }
 
-    /// returns a reference to the adapter which can be used to
+    /// Returns a reference to the adapter which can be used to
     /// acquire information
     #[inline(always)]
     pub const fn adapter(&self) -> &Adapter {
         &self.adapter
     }
 
+    /// Helper method to create a buffer from its content and usage
     pub fn create_buffer<T: Pod>(&self, content: &[T], usage: BufferUsages) -> Buffer {
         // FIXME: should we switch from Pod to NoUninit?
         self.device.create_buffer_init(&BufferInitDescriptor {
@@ -260,6 +271,7 @@ impl State {
         })
     }
 
+    /// Helper method to create a texture from its builder
     pub fn create_texture(&self, builder: TextureBuilder) -> Texture {
         let mip_info = builder.mip_info;
         let dimensions = builder
@@ -312,6 +324,7 @@ impl State {
         diffuse_texture
     }
 
+    /// Helper method to create a `BindGroupLayoutEntry` from its entries
     pub fn create_bind_group_layout(&self, entries: &[BindGroupLayoutEntry]) -> BindGroupLayout {
         self.device
             .create_bind_group_layout(&BindGroupLayoutDescriptor {
@@ -320,6 +333,7 @@ impl State {
             })
     }
 
+    /// Helper method to create a `BindGroup` from its layout and entries
     pub fn create_bind_group(
         &self,
         layout: &BindGroupLayout,
@@ -332,11 +346,13 @@ impl State {
         })
     }
 
+    /// Helper method to write data to a buffer at a specific offset
     pub fn write_buffer<T: Pod>(&self, buffer: &Buffer, offset: BufferAddress, data: &[T]) {
         self.queue
             .write_buffer(buffer, offset, bytemuck::cast_slice(data));
     }
 
+    /// Helper method to create a depth texture from its format
     pub fn create_depth_texture(&self, format: TextureFormat) -> Texture {
         let (width, height) = self.size();
         let size = Extent3d {
