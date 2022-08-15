@@ -7,7 +7,7 @@ description = "Use WGPU for your graphical application but without the usual bio
 repository = "https://github.com/terrarier2111/wgpu-boilerless"
 readme = "README.md"
 keywords = ["wgpu", "gpu", "gamedev", "graphics"]
-categories = ["Graphics", "Rendering", "Game development"]
+categories = ["graphics", "rendering", "game-development"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
