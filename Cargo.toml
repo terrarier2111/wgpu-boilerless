@@ -2,12 +2,18 @@
 name = "wgpu-biolerless"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Use WGPU for your graphical application but without the usual biolerplate"
+repository = "https://github.com/terrarier2111/wgpu-boilerless"
+readme = "README.md"
+keywords = ["wgpu", "gpu", "gamedev", "graphics"]
+categories = ["Graphics", "Rendering", "Game development"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 wgpu = "0.13.1"
-bytemuck = { version = "1.11.0", features = ["derive"] }
+bytemuck = { version = "1.12.0", features = ["derive"] }
 parking_lot = "0.12.1"
 anyhow = "1.0.60"
 raw-window-handle = "0.4.3"
