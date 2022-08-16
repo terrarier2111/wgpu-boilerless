@@ -165,8 +165,13 @@ impl State {
         }
     }
 
-    /// This does the same thing as `render_to_view` but we render to
-    /// a texture we acquired from the surface.
+    /// Initiates the rendering process, the passed callback gets
+    /// called once all the required state is set up and
+    /// once it ran, all the required steps to proceed get executed.
+    ///
+    /// *Note*: specifying a view might be useful if your renderer
+    /// interacts with a texture provided by another application
+    /// or you want to generate an image.
     pub fn render<F: FnOnce(&TextureView, CommandEncoder, &State) -> CommandEncoder>(
         &self,
         callback: F,
@@ -177,33 +182,17 @@ impl State {
         // get a view of the current texture in order to render on it
         let view = output.texture.create_view(surface_view_desc);
 
-        self.render_to_view(callback, &view)?;
-
-        output.present();
-        self.surface_texture_alive.store(false, Ordering::Release);
-
-        Ok(())
-    }
-
-    /// Initiates the rendering process, the passed callback gets
-    /// called once all the required state is set up and
-    /// once it ran, all the required steps to proceed get executed.
-    ///
-    /// *Note*: specifying a view might be useful if your renderer
-    /// interacts with a texture provided by another application
-    /// or you want to generate an image.
-    pub fn render_to_view<F: FnOnce(&TextureView, CommandEncoder, &State) -> CommandEncoder>(
-        &self,
-        callback: F,
-        view: &TextureView,
-    ) -> Result<(), SurfaceError> {
         let encoder = self
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
         // let the user do stuff with the encoder
-        let encoder = callback(view, encoder, self);
+        let encoder = callback(&view, encoder, self);
 
         self.queue.submit(once(encoder.finish()));
+
+        output.present();
+        self.surface_texture_alive.store(false, Ordering::Release);
+
         Ok(())
     }
 
@@ -842,4 +831,12 @@ pub const fn matrix<const COLUMNS: usize>(
 pub trait WindowSize: HasRawWindowHandle {
     /// Returns the size of the window in the format (width, height)
     fn window_size(&self) -> (u32, u32);
+}
+
+#[cfg(feature = "winit")]
+impl WindowSize for winit::window::Window {
+    fn window_size(&self) -> (u32, u32) {
+        let size = self.inner_size();
+        (size.width, size.height)
+    }
 }
