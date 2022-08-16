@@ -170,13 +170,12 @@ impl State {
     pub fn render<F: FnOnce(&TextureView, CommandEncoder, &State) -> CommandEncoder>(
         &self,
         callback: F,
+        surface_view_desc: &TextureViewDescriptor,
     ) -> Result<(), SurfaceError> {
         self.surface_texture_alive.store(true, Ordering::Release);
         let output = self.surface.get_current_texture()?;
         // get a view of the current texture in order to render on it
-        let view = output
-            .texture
-            .create_view(&mut TextureViewDescriptor::default()); // FIXME: do we need a way to parameterize this?
+        let view = output.texture.create_view(surface_view_desc);
 
         self.render_to_view(callback, &view)?;
 
