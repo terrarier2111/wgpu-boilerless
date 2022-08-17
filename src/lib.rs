@@ -284,7 +284,7 @@ impl State {
     pub fn create_buffer<T: Pod>(
         &self,
         #[cfg(feature = "debug_labels")] label: Label,
-        content: &T,
+        content: &[T],
         usage: BufferUsages,
     ) -> Buffer {
         // FIXME: should we switch from Pod to NoUninit?
@@ -293,8 +293,7 @@ impl State {
             label,
             #[cfg(not(feature = "debug_labels"))]
             label: None,
-            // contents: bytemuck::cast_slice(content),
-            contents: bytemuck::bytes_of(content),
+            contents: bytemuck::cast_slice(content),
             usage,
         })
     }
