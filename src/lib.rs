@@ -92,9 +92,9 @@ impl State {
 
     /// Creates a new pipeline layout from its bind group layouts and
     /// its push constant ranges
-    pub fn create_pipeline_layout<'a>(
+    pub fn create_pipeline_layout(
         &self,
-        #[cfg(feature = "debug_labels")] label: Label<'a>,
+        #[cfg(feature = "debug_labels")] label: Label,
         bind_group_layouts: &[&BindGroupLayout],
         push_constant_ranges: &[PushConstantRange],
     ) -> PipelineLayout {
@@ -152,10 +152,10 @@ impl State {
     }
 
     /// Creates a shader module from its src
-    pub fn create_shader<'a>(
+    pub fn create_shader(
         &self,
+        #[cfg(feature = "debug_labels")] label: Label,
         src: ShaderSource,
-        #[cfg(feature = "debug_labels")] label: Label<'a>,
     ) -> ShaderModule {
         self.device.create_shader_module(ShaderModuleDescriptor {
             #[cfg(feature = "debug_labels")]
@@ -281,11 +281,20 @@ impl State {
     }
 
     /// Helper method to create a buffer from its content and usage
-    pub fn create_buffer<T: Pod>(&self, content: &[T], usage: BufferUsages) -> Buffer {
+    pub fn create_buffer<T: Pod>(
+        &self,
+        #[cfg(feature = "debug_labels")] label: Label,
+        content: &T,
+        usage: BufferUsages,
+    ) -> Buffer {
         // FIXME: should we switch from Pod to NoUninit?
         self.device.create_buffer_init(&BufferInitDescriptor {
+            #[cfg(feature = "debug_labels")]
+            label,
+            #[cfg(not(feature = "debug_labels"))]
             label: None,
-            contents: bytemuck::cast_slice(content),
+            // contents: bytemuck::cast_slice(content),
+            contents: bytemuck::bytes_of(content),
             usage,
         })
     }
@@ -317,6 +326,9 @@ impl State {
             format,
             // COPY_DST means that we want to copy data to this texture
             usage: builder.usages,
+            #[cfg(feature = "debug_labels")]
+            label: builder.label,
+            #[cfg(not(feature = "debug_labels"))]
             label: None,
         });
         self.queue.write_texture(
@@ -344,9 +356,16 @@ impl State {
     }
 
     /// Helper method to create a `BindGroupLayoutEntry` from its entries
-    pub fn create_bind_group_layout(&self, entries: &[BindGroupLayoutEntry]) -> BindGroupLayout {
+    pub fn create_bind_group_layout(
+        &self,
+        #[cfg(feature = "debug_labels")] label: Label,
+        entries: &[BindGroupLayoutEntry],
+    ) -> BindGroupLayout {
         self.device
             .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                #[cfg(feature = "debug_labels")]
+                label,
+                #[cfg(not(feature = "debug_labels"))]
                 label: None,
                 entries,
             })
@@ -355,10 +374,14 @@ impl State {
     /// Helper method to create a `BindGroup` from its layout and entries
     pub fn create_bind_group(
         &self,
+        #[cfg(feature = "debug_labels")] label: Label,
         layout: &BindGroupLayout,
         entries: &[BindGroupEntry],
     ) -> BindGroup {
         self.device.create_bind_group(&BindGroupDescriptor {
+            #[cfg(feature = "debug_labels")]
+            label,
+            #[cfg(not(feature = "debug_labels"))]
             label: None,
             layout,
             entries,
