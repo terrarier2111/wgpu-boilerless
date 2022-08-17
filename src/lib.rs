@@ -8,6 +8,8 @@ use std::iter::once;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
+#[cfg(feature = "debug_labels")]
+use wgpu::Label;
 use wgpu::{
     Adapter, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
     BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer, BufferAddress, BufferUsages,
@@ -90,13 +92,17 @@ impl State {
 
     /// Creates a new pipeline layout from its bind group layouts and
     /// its push constant ranges
-    pub fn create_pipeline_layout(
+    pub fn create_pipeline_layout<'a>(
         &self,
+        #[cfg(feature = "debug_labels")] label: Label<'a>,
         bind_group_layouts: &[&BindGroupLayout],
         push_constant_ranges: &[PushConstantRange],
     ) -> PipelineLayout {
         self.device
             .create_pipeline_layout(&PipelineLayoutDescriptor {
+                #[cfg(feature = "debug_labels")]
+                label,
+                #[cfg(not(feature = "debug_labels"))]
                 label: None,
                 bind_group_layouts,
                 push_constant_ranges,
@@ -104,7 +110,7 @@ impl State {
     }
 
     /// Helper method to create a pipeline from its builder
-    pub fn create_pipeline(&self, builder: PipelineBuilder<'_>) -> RenderPipeline {
+    pub fn create_pipeline(&self, builder: PipelineBuilder) -> RenderPipeline {
         let shaders = builder
             .shader_sources
             .expect("shader sources have to be specified before building the pipeline")
@@ -115,6 +121,9 @@ impl State {
 
         self.device
             .create_render_pipeline(&RenderPipelineDescriptor {
+                #[cfg(feature = "debug_labels")]
+                label: builder.label,
+                #[cfg(not(feature = "debug_labels"))]
                 label: None,
                 layout: Some(
                     builder
@@ -143,8 +152,15 @@ impl State {
     }
 
     /// Creates a shader module from its src
-    pub fn create_shader(&self, src: ShaderSource<'_>) -> ShaderModule {
+    pub fn create_shader<'a>(
+        &self,
+        src: ShaderSource,
+        #[cfg(feature = "debug_labels")] label: Label<'a>,
+    ) -> ShaderModule {
         self.device.create_shader_module(ShaderModuleDescriptor {
+            #[cfg(feature = "debug_labels")]
+            label,
+            #[cfg(not(feature = "debug_labels"))]
             label: None,
             source: src,
         })
@@ -168,10 +184,6 @@ impl State {
     /// Initiates the rendering process, the passed callback gets
     /// called once all the required state is set up and
     /// once it ran, all the required steps to proceed get executed.
-    ///
-    /// *Note*: specifying a view might be useful if your renderer
-    /// interacts with a texture provided by another application
-    /// or you want to generate an image.
     pub fn render<F: FnOnce(&TextureView, CommandEncoder, &State) -> CommandEncoder>(
         &self,
         callback: F,
@@ -390,6 +402,8 @@ pub struct PipelineBuilder<'a> {
     multisample: MultisampleState,
     multiview: Option<NonZeroU32>,
     shader_sources: Option<ShaderModuleSources<'a>>,
+    #[cfg(feature = "debug_labels")]
+    label: Label<'a>,
 }
 
 impl<'a> PipelineBuilder<'a> {
@@ -442,6 +456,12 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
+    #[cfg(feature = "debug_labels")]
+    pub fn label(mut self, label: &'a str) -> Self {
+        self.label = Some(label);
+        self
+    }
+
     #[inline]
     pub fn build(self, state: &State) -> RenderPipeline {
         state.create_pipeline(self)
@@ -481,11 +501,22 @@ impl<'a> ShaderModuleSources<'a> {
 }
 
 pub enum ModuleSrc<'a> {
-    Source(ShaderSource<'a>),
+    Source(ShaderSource<'a>, #[cfg(feature = "debug_labels")] Label<'a>),
     Ref(&'a ShaderModule),
 }
 
 impl<'a> ModuleSrc<'a> {
+    #[cfg(feature = "debug_labels")]
+    fn to_module(self, state: &'a State) -> MaybeOwnedModule<'a> {
+        match self {
+            ModuleSrc::Source(src, label) => {
+                MaybeOwnedModule::Owned(state.create_shader(src, label))
+            }
+            ModuleSrc::Ref(reference) => MaybeOwnedModule::Ref(reference),
+        }
+    }
+
+    #[cfg(not(feature = "debug_labels"))]
     fn to_module(self, state: &'a State) -> MaybeOwnedModule<'a> {
         match self {
             ModuleSrc::Source(src) => MaybeOwnedModule::Owned(state.create_shader(src)),
@@ -494,6 +525,15 @@ impl<'a> ModuleSrc<'a> {
     }
 }
 
+#[cfg(feature = "debug_labels")]
+impl<'a> From<ShaderSource<'a>> for ModuleSrc<'a> {
+    #[inline]
+    fn from(src: ShaderSource<'a>) -> Self {
+        Self::Source(src, None)
+    }
+}
+
+#[cfg(not(feature = "debug_labels"))]
 impl<'a> From<ShaderSource<'a>> for ModuleSrc<'a> {
     #[inline]
     fn from(src: ShaderSource<'a>) -> Self {
@@ -581,6 +621,8 @@ pub struct TextureBuilder<'a> {
     sample_count: u32,          // we have a default
     mip_info: MipInfo,          // we have a default
     depth_or_array_layers: u32, // we have a default
+    #[cfg(feature = "debug_labels")]
+    label: Label<'a>,
 }
 
 impl Default for TextureBuilder<'_> {
@@ -595,6 +637,8 @@ impl Default for TextureBuilder<'_> {
             sample_count: 1,
             mip_info: MipInfo::default(),
             depth_or_array_layers: 1,
+            #[cfg(feature = "debug_labels")]
+            label: None,
         }
     }
 }
@@ -657,6 +701,12 @@ impl<'a> TextureBuilder<'a> {
     #[inline]
     pub fn depth_or_array_layers(mut self, depth_or_array_layers: u32) -> Self {
         self.depth_or_array_layers = depth_or_array_layers;
+        self
+    }
+
+    #[cfg(feature = "debug_labels")]
+    pub fn label(mut self, label: &'a str) -> Self {
+        self.label = Some(label);
         self
     }
 
@@ -769,13 +819,13 @@ pub struct DeviceRequirements {
 pub struct NoSuitableAdapterFoundError;
 
 impl Debug for NoSuitableAdapterFoundError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         f.write_str("couldn't create state because no suitable adapter was found")
     }
 }
 
 impl Display for NoSuitableAdapterFoundError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         f.write_str("couldn't create state because no suitable adapter was found")
     }
 }

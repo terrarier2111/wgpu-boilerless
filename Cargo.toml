@@ -14,6 +14,8 @@ categories = ["graphics", "rendering", "game-development"]
 [features]
 # Implements the WindowSize trait for winit's Window
 winit = ["dep:winit"]
+# Certain functions will take an additional debug label argument
+debug_labels = []
 
 [dependencies]
 wgpu = "0.13.1"
