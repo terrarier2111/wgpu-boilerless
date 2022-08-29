@@ -30,7 +30,7 @@ pub struct State {
     device: Device,
     queue: Queue,
     config: RwLock<SurfaceConfiguration>, // FIXME: should we use a Mutex instead?
-    surface_texture_alive: AtomicBool,
+    surface_texture_alive: AtomicBool, // FIXME: should we use a Mutex instead cuz it can spin and thus save cycles.
 }
 
 impl State {
@@ -142,9 +142,7 @@ impl State {
                         entry_point: fragment_shader.entry_point,
                         targets: fragment_shader.targets,
                     }),
-                primitive: builder
-                    .primitive
-                    .expect("primitive has to be specified before building the pipeline"),
+                primitive: builder.primitive,
                 depth_stencil: builder.depth_stencil,
                 multisample: builder.multisample,
                 multiview: builder.multiview,
@@ -228,7 +226,7 @@ impl State {
         (config.width, config.height)
     }
 
-    /// Returns the format defined in the config
+    /// Returns the surface's current format
     pub fn format(&self) -> TextureFormat {
         let config = self.config.read();
         config.format.clone()
@@ -268,9 +266,9 @@ impl State {
     }
 
     /// Returns a reference to the surface
-    #[inline(always)]
-    pub const fn surface(&self) -> &Surface {
-        &self.surface
+    #[inline]
+    pub const fn surface(&self) -> ROSurface {
+        ROSurface(&self.surface, &self.adapter)
     }
 
     /// Returns a reference to the adapter which can be used to
@@ -419,7 +417,7 @@ pub struct PipelineBuilder<'a> {
     layout: Option<&'a PipelineLayout>,
     vertex_shader: Option<VertexShaderState<'a>>,
     fragment_shader: Option<FragmentShaderState<'a>>,
-    primitive: Option<PrimitiveState>,
+    primitive: PrimitiveState,
     depth_stencil: Option<DepthStencilState>,
     multisample: MultisampleState,
     multiview: Option<NonZeroU32>,
@@ -450,7 +448,7 @@ impl<'a> PipelineBuilder<'a> {
     }
 
     pub fn primitive(mut self, primitive: PrimitiveState) -> Self {
-        self.primitive = Some(primitive);
+        self.primitive = primitive;
         self
     }
 
@@ -910,5 +908,22 @@ impl WindowSize for winit::window::Window {
     fn window_size(&self) -> (u32, u32) {
         let size = self.inner_size();
         (size.width, size.height)
+    }
+}
+
+/// this is a read-only version of the Surface struct
+pub struct ROSurface<'a>(&'a Surface, &'a Adapter);
+
+impl ROSurface<'_> {
+    /// See [Surface::get_supported_formats]
+    #[inline]
+    pub fn get_supported_formats(&self) -> Vec<TextureFormat> {
+        self.0.get_supported_formats(self.1)
+    }
+
+    /// See [Surface::get_supported_modes]
+    #[inline]
+    pub fn get_supported_modes(&self) -> Vec<PresentMode> {
+        self.0.get_supported_modes(self.1)
     }
 }
