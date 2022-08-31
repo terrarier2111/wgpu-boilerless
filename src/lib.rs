@@ -911,6 +911,14 @@ impl WindowSize for winit::window::Window {
     }
 }
 
+#[cfg(feature = "winit")]
+impl WindowSize for &winit::window::Window {
+    fn window_size(&self) -> (u32, u32) {
+        let size = self.inner_size();
+        (size.width, size.height)
+    }
+}
+
 /// this is a read-only version of the Surface struct
 pub struct ROSurface<'a>(&'a Surface, &'a Adapter);
 
