@@ -38,7 +38,7 @@ impl State {
     ///
     /// returns either the newly created state or an error if
     /// requesting an adapter or device fails.
-    pub async fn new<T: WindowSize>(builder: StateBuilder<T>) -> anyhow::Result<Self> {
+    pub async fn new<T: WindowSize>(builder: StateBuilder<'_, T>) -> anyhow::Result<Self> {
         let window = builder
             .window
             .expect("window has to be specified before building the state");
@@ -736,8 +736,8 @@ impl<'a> TextureBuilder<'a> {
     }
 }
 
-pub struct StateBuilder<T: WindowSize> {
-    window: Option<T>,
+pub struct StateBuilder<'a, T: WindowSize> {
+    window: Option<&'a T>,
     power_pref: PowerPreference,      // we have a default
     present_mode: PresentMode,        // we have a default
     requirements: DeviceRequirements, // we have a default
@@ -745,7 +745,7 @@ pub struct StateBuilder<T: WindowSize> {
     format: Option<TextureFormat>,    // we have a default
 }
 
-impl<T: WindowSize> Default for StateBuilder<T> {
+impl<T: WindowSize> Default for StateBuilder<'_, T> {
     fn default() -> Self {
         Self {
             backends: Backends::all(),
@@ -758,13 +758,13 @@ impl<T: WindowSize> Default for StateBuilder<T> {
     }
 }
 
-impl<T: WindowSize> StateBuilder<T> {
+impl<'a, T: WindowSize> StateBuilder<'a, T> {
     #[inline]
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn window(mut self, window: T) -> Self {
+    pub fn window(mut self, window: &'a T) -> Self {
         self.window = Some(window);
         self
     }
