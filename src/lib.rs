@@ -5,6 +5,7 @@ use raw_window_handle::HasRawWindowHandle;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::iter::once;
+use std::marker::PhantomData;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
@@ -114,7 +115,7 @@ impl State {
         let shaders = builder
             .shader_sources
             .expect("shader sources have to be specified before building the pipeline")
-            .to_modules(self);
+            .into_modules(self);
         let vertex_shader = builder
             .vertex_shader
             .expect("vertex shader has to be specified before building the pipeline");
@@ -229,7 +230,7 @@ impl State {
     /// Returns the surface's current format
     pub fn format(&self) -> TextureFormat {
         let config = self.config.read();
-        config.format.clone()
+        config.format
     }
 
     /// Tries to update the present mode of the surface.
@@ -298,33 +299,37 @@ impl State {
 
     /// Helper method to create a texture from its builder
     pub fn create_texture(&self, builder: TextureBuilder) -> Texture {
+        // FIXME: reuse create_raw_texture method to reduce code duplication
         let mip_info = builder.mip_info;
         let dimensions = builder
+            .inner
             .dimensions
             .expect("dimensions have to be specified before building the texture");
         let texture_size = Extent3d {
             width: dimensions.0,
             height: dimensions.1,
-            depth_or_array_layers: builder.depth_or_array_layers,
+            depth_or_array_layers: builder.inner.depth_or_array_layers,
         };
         let format = builder
+            .inner
             .format
             .expect("format has to be specified before building the texture");
         let diffuse_texture = self.device.create_texture(&TextureDescriptor {
             // All textures are stored as 3D, we represent our 2D texture
             // by setting depth to 1.
             size: texture_size,
-            mip_level_count: mip_info.mip_level_count, // We'll talk about this a little later
-            sample_count: builder.sample_count,
+            mip_level_count: mip_info.mip_level_count,
+            sample_count: builder.inner.sample_count,
             dimension: builder
+                .inner
                 .texture_dimension
                 .expect("texture dimension has to be specified before building the texture"),
             // Most images are stored using sRGB so we need to reflect that here.
             format,
             // COPY_DST means that we want to copy data to this texture
-            usage: builder.usages,
+            usage: builder.inner.usages.unwrap(),
             #[cfg(feature = "debug_labels")]
-            label: builder.label,
+            label: builder.inner.label,
             #[cfg(not(feature = "debug_labels"))]
             label: None,
         });
@@ -350,6 +355,42 @@ impl State {
         );
 
         diffuse_texture
+    }
+
+    /// Helper method to create a raw texture from its builder
+    pub fn create_raw_texture(&self, builder: RawTextureBuilder) -> Texture {
+        let dimensions = builder
+            .dimensions
+            .expect("dimensions have to be specified before building the texture");
+        let texture_size = Extent3d {
+            width: dimensions.0,
+            height: dimensions.1,
+            depth_or_array_layers: builder.depth_or_array_layers,
+        };
+        let format = builder
+            .format
+            .expect("format has to be specified before building the texture");
+
+        self.device.create_texture(&TextureDescriptor {
+            // All textures are stored as 3D, we represent our 2D texture
+            // by setting depth to 1.
+            size: texture_size,
+            mip_level_count: builder.mip_level_count,
+            sample_count: builder.sample_count,
+            dimension: builder
+                .texture_dimension
+                .expect("texture dimension has to be specified before building the texture"),
+            // Most images are stored using sRGB so we need to reflect that here.
+            format,
+            // COPY_DST means that we want to copy data to this texture
+            usage: builder
+                .usages
+                .expect("texture usages have to be specified before building the texture"),
+            #[cfg(feature = "debug_labels")]
+            label: builder.label,
+            #[cfg(not(feature = "debug_labels"))]
+            label: None,
+        })
     }
 
     /// Helper method to create a `BindGroupLayoutEntry` from its entries
@@ -510,12 +551,13 @@ pub enum ShaderModuleSources<'a> {
 }
 
 impl<'a> ShaderModuleSources<'a> {
-    fn to_modules(self, state: &'a State) -> ShaderModules {
+    fn into_modules(self, state: &'a State) -> ShaderModules {
         match self {
-            ShaderModuleSources::Single(src) => ShaderModules::Single(src.to_module(state)),
-            ShaderModuleSources::Multi(vertex_src, fragment_src) => {
-                ShaderModules::Multi(vertex_src.to_module(state), fragment_src.to_module(state))
-            }
+            ShaderModuleSources::Single(src) => ShaderModules::Single(src.into_module(state)),
+            ShaderModuleSources::Multi(vertex_src, fragment_src) => ShaderModules::Multi(
+                vertex_src.into_module(state),
+                fragment_src.into_module(state),
+            ),
         }
     }
 }
@@ -527,7 +569,7 @@ pub enum ModuleSrc<'a> {
 
 impl<'a> ModuleSrc<'a> {
     #[cfg(feature = "debug_labels")]
-    fn to_module(self, state: &'a State) -> MaybeOwnedModule<'a> {
+    fn into_module(self, state: &'a State) -> MaybeOwnedModule<'a> {
         match self {
             ModuleSrc::Source(src, label) => {
                 MaybeOwnedModule::Owned(state.create_shader(src, label))
@@ -537,7 +579,7 @@ impl<'a> ModuleSrc<'a> {
     }
 
     #[cfg(not(feature = "debug_labels"))]
-    fn to_module(self, state: &'a State) -> MaybeOwnedModule<'a> {
+    fn into_module(self, state: &'a State) -> MaybeOwnedModule<'a> {
         match self {
             ModuleSrc::Source(src) => MaybeOwnedModule::Owned(state.create_shader(src)),
             ModuleSrc::Ref(reference) => MaybeOwnedModule::Ref(reference),
@@ -631,47 +673,40 @@ impl<'a> From<(&'a ShaderModule, &'a ShaderModule)> for ShaderModuleSources<'a> 
     }
 }
 
-pub struct TextureBuilder<'a> {
-    data: Option<&'a [u8]>,
+pub struct RawTextureBuilder<'a> {
     dimensions: Option<(u32, u32)>,
     format: Option<TextureFormat>,
     texture_dimension: Option<TextureDimension>,
-    usages: TextureUsages,      // MAYBE(currently): we have a default
-    aspect: TextureAspect,      // we have a default
+    usages: Option<TextureUsages>,
     sample_count: u32,          // we have a default
-    mip_info: MipInfo,          // we have a default
+    mip_level_count: u32,       // we have a default
     depth_or_array_layers: u32, // we have a default
     #[cfg(feature = "debug_labels")]
     label: Label<'a>,
+    _phantom_data: PhantomData<&'a ()>, // this is required in case debug_labels are disabled
 }
 
-impl Default for TextureBuilder<'_> {
+impl Default for RawTextureBuilder<'_> {
     fn default() -> Self {
         Self {
-            data: None,
             dimensions: None,
             format: None,
             texture_dimension: None,
-            usages: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-            aspect: TextureAspect::All,
+            usages: None,
             sample_count: 1,
-            mip_info: MipInfo::default(),
+            mip_level_count: 1,
             depth_or_array_layers: 1,
             #[cfg(feature = "debug_labels")]
             label: None,
+            _phantom_data: Default::default(),
         }
     }
 }
 
-impl<'a> TextureBuilder<'a> {
+impl<'a> RawTextureBuilder<'a> {
     #[inline]
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub fn data(mut self, data: &'a [u8]) -> Self {
-        self.data = Some(data);
-        self
     }
 
     pub fn dimensions(mut self, dimensions: (u32, u32)) -> Self {
@@ -689,17 +724,8 @@ impl<'a> TextureBuilder<'a> {
         self
     }
 
-    /// The default value is TextureUsages::TEXTURE_BINDING
-    /// *Note*: TextureUsages::COPY_DST gets appended to the usages
     pub fn usages(mut self, usages: TextureUsages) -> Self {
-        self.usages = usages | TextureUsages::COPY_DST;
-        self
-    }
-
-    /// The default value is `TextureAspect::All`
-    #[inline]
-    pub fn aspect(mut self, aspect: TextureAspect) -> Self {
-        self.aspect = aspect;
+        self.usages = Some(usages);
         self
     }
 
@@ -710,10 +736,10 @@ impl<'a> TextureBuilder<'a> {
         self
     }
 
-    /// The default value is `MipInfo::default()`
+    /// The default value is `1`
     #[inline]
-    pub fn mip_info(mut self, mip_info: MipInfo) -> Self {
-        self.mip_info = mip_info;
+    pub fn mip_info(mut self, mip_level_count: u32) -> Self {
+        self.mip_level_count = mip_level_count;
         self
     }
 
@@ -727,6 +753,99 @@ impl<'a> TextureBuilder<'a> {
     #[cfg(feature = "debug_labels")]
     pub fn label(mut self, label: &'a str) -> Self {
         self.label = Some(label);
+        self
+    }
+
+    #[inline]
+    pub fn build(self, state: &State) -> Texture {
+        state.create_raw_texture(self)
+    }
+}
+
+pub struct TextureBuilder<'a> {
+    inner: RawTextureBuilder<'a>,
+    data: Option<&'a [u8]>,
+    aspect: TextureAspect, // we have a default
+    mip_info: MipInfo,     // we have a default
+}
+
+impl Default for TextureBuilder<'_> {
+    fn default() -> Self {
+        Self {
+            inner: RawTextureBuilder::new()
+                .usages(TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST),
+            data: None,
+            aspect: TextureAspect::All,
+            mip_info: MipInfo::default(),
+        }
+    }
+}
+
+impl<'a> TextureBuilder<'a> {
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn data(mut self, data: &'a [u8]) -> Self {
+        self.data = Some(data);
+        self
+    }
+
+    pub fn dimensions(mut self, dimensions: (u32, u32)) -> Self {
+        self.inner = self.inner.dimensions(dimensions);
+        self
+    }
+
+    pub fn format(mut self, format: TextureFormat) -> Self {
+        self.inner = self.inner.format(format);
+        self
+    }
+
+    pub fn texture_dimension(mut self, texture_dimension: TextureDimension) -> Self {
+        self.inner = self.inner.texture_dimension(texture_dimension);
+        self
+    }
+
+    /// The default value is TextureUsages::TEXTURE_BINDING
+    /// *Note*: TextureUsages::COPY_DST gets appended to the usages
+    pub fn usages(mut self, usages: TextureUsages) -> Self {
+        self.inner = self.inner.usages(usages | TextureUsages::COPY_DST);
+        self
+    }
+
+    /// The default value is `TextureAspect::All`
+    #[inline]
+    pub fn aspect(mut self, aspect: TextureAspect) -> Self {
+        self.aspect = aspect;
+        self
+    }
+
+    /// The default value is 1
+    #[inline]
+    pub fn sample_count(mut self, sample_count: u32) -> Self {
+        self.inner = self.inner.sample_count(sample_count);
+        self
+    }
+
+    /// The default value is `MipInfo::default()`
+    #[inline]
+    pub fn mip_info(mut self, mip_info: MipInfo) -> Self {
+        self.inner.mip_level_count = mip_info.mip_level_count;
+        self.mip_info = mip_info;
+        self
+    }
+
+    /// The default value is 1
+    #[inline]
+    pub fn depth_or_array_layers(mut self, depth_or_array_layers: u32) -> Self {
+        self.inner = self.inner.depth_or_array_layers(depth_or_array_layers);
+        self
+    }
+
+    #[cfg(feature = "debug_labels")]
+    pub fn label(mut self, label: &'a str) -> Self {
+        self.label(label);
         self
     }
 
