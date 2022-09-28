@@ -18,9 +18,9 @@ winit = ["dep:winit"]
 debug_labels = []
 
 [dependencies]
-wgpu = "0.13.1"
-bytemuck = { version = "1.12.1", features = ["derive"] }
-parking_lot = "0.12.1"
-anyhow = "1.0.61"
+wgpu = "0.13"
+bytemuck = { version = "1.12", features = ["derive"] }
+parking_lot = "0.12"
+anyhow = "1.0"
 raw-window-handle = "0.4.3"
-winit = { version = "0.27.2", optional = true }
+winit = { version = "0.27", optional = true }
