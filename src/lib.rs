@@ -1,12 +1,14 @@
 use anyhow::Error as AnyError;
 use bytemuck::Pod;
-use parking_lot::RwLock;
+use parking_lot::lock_api::RwLockReadGuard;
+use parking_lot::{RawRwLock, RwLock};
 use raw_window_handle::HasRawWindowHandle;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::iter::once;
 use std::marker::PhantomData;
 use std::num::NonZeroU32;
+use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, Ordering};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 #[cfg(feature = "debug_labels")]
@@ -277,6 +279,12 @@ impl State {
     #[inline(always)]
     pub const fn adapter(&self) -> &Adapter {
         &self.adapter
+    }
+
+    /// Returns a reference to the surface's config.
+    /// NOTE: This function is only intended to be used with apis
+    pub fn raw_inner_surface_config(&self) -> SurfaceConfigurationRef<'_> {
+        SurfaceConfigurationRef(self.config.read())
     }
 
     /// Helper method to create a buffer from its content and usage
@@ -1044,5 +1052,22 @@ impl ROSurface<'_> {
     #[inline]
     pub fn get_supported_modes(&self) -> Vec<PresentMode> {
         self.0.get_supported_modes(self.1)
+    }
+}
+
+/// this is a wrapper for a RwLockGuard guarding a readable SurfaceConfig
+pub struct SurfaceConfigurationRef<'a>(RwLockReadGuard<'a, RawRwLock, SurfaceConfiguration>);
+
+impl AsRef<SurfaceConfiguration> for SurfaceConfigurationRef<'_> {
+    fn as_ref(&self) -> &SurfaceConfiguration {
+        &*self.0
+    }
+}
+
+impl Deref for SurfaceConfigurationRef<'_> {
+    type Target = SurfaceConfiguration;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
     }
 }
