@@ -2,7 +2,7 @@ use anyhow::Error as AnyError;
 use bytemuck::Pod;
 use parking_lot::lock_api::RwLockReadGuard;
 use parking_lot::{RawRwLock, RwLock};
-use raw_window_handle::HasRawWindowHandle;
+use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::iter::once;
@@ -16,24 +16,25 @@ use wgpu::Label;
 use wgpu::{
     Adapter, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
     BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer, BufferAddress, BufferUsages,
-    ColorTargetState, CommandEncoder, CommandEncoderDescriptor, DepthStencilState, Device,
-    DeviceDescriptor, Extent3d, Features, FragmentState, ImageCopyTexture, ImageDataLayout,
-    Instance, Limits, MultisampleState, Origin3d, PipelineLayout, PipelineLayoutDescriptor,
-    PowerPreference, PresentMode, PrimitiveState, PushConstantRange, Queue, RenderPass,
-    RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor,
-    RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, ShaderModule,
-    ShaderModuleDescriptor, ShaderSource, Surface, SurfaceConfiguration, SurfaceError, Texture,
-    TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView,
+    ColorTargetState, CommandEncoder, CommandEncoderDescriptor, CompositeAlphaMode,
+    DepthStencilState, Device, DeviceDescriptor, Extent3d, Features, FragmentState,
+    ImageCopyTexture, ImageDataLayout, Instance, Limits, MultisampleState, Origin3d,
+    PipelineLayout, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState,
+    PushConstantRange, Queue, RenderPass, RenderPassColorAttachment,
+    RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline,
+    RenderPipelineDescriptor, RequestAdapterOptions, ShaderModule, ShaderModuleDescriptor,
+    ShaderSource, Surface, SurfaceConfiguration, SurfaceError, Texture, TextureAspect,
+    TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView,
     TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
 };
 
 pub struct State {
     surface: Surface,
-    adapter: Adapter, // can be used by api users to acquire information
-    device: Device,
-    queue: Queue,
+    pub adapter: Adapter, // can be used by api users to acquire information
+    pub device: Device,
+    pub queue: Queue,
     config: RwLock<SurfaceConfiguration>, // FIXME: should we use a Mutex instead?
-    surface_texture_alive: AtomicBool, // FIXME: should we use a Mutex instead cuz it can spin and thus save cycles.
+    surface_texture_alive: AtomicBool, // FIXME: should we use a Mutex instead cuz it can spin and thus save cycles?
 }
 
 impl State {
@@ -78,6 +79,7 @@ impl State {
                 width: size.0,
                 height: size.0,
                 present_mode: builder.present_mode,
+                alpha_mode: builder.alpha_mode,
             };
             surface.configure(&device, &config);
 
@@ -256,29 +258,10 @@ impl State {
         }
     }
 
-    /// Returns a reference to the device
-    #[inline(always)]
-    pub const fn device(&self) -> &Device {
-        &self.device
-    }
-
-    /// Returns a reference to the queue
-    #[inline(always)]
-    pub const fn queue(&self) -> &Queue {
-        &self.queue
-    }
-
     /// Returns a reference to the surface
     #[inline]
     pub const fn surface(&self) -> ROSurface {
         ROSurface(&self.surface, &self.adapter)
-    }
-
-    /// Returns a reference to the adapter which can be used to
-    /// acquire information
-    #[inline(always)]
-    pub const fn adapter(&self) -> &Adapter {
-        &self.adapter
     }
 
     /// Returns a reference to the surface's config.
@@ -870,6 +853,7 @@ pub struct StateBuilder<'a, T: WindowSize> {
     requirements: DeviceRequirements, // we have a default
     backends: Backends,               // we have a default
     format: Option<TextureFormat>,    // we have a default
+    alpha_mode: CompositeAlphaMode,   // we have a default
 }
 
 impl<T: WindowSize> Default for StateBuilder<'_, T> {
@@ -881,6 +865,7 @@ impl<T: WindowSize> Default for StateBuilder<'_, T> {
             present_mode: Default::default(),
             requirements: Default::default(),
             format: None,
+            alpha_mode: CompositeAlphaMode::Auto,
         }
     }
 }
@@ -907,6 +892,13 @@ impl<'a, T: WindowSize> StateBuilder<'a, T> {
     #[inline]
     pub fn present_mode(mut self, present_mode: PresentMode) -> Self {
         self.present_mode = present_mode;
+        self
+    }
+
+    /// The default value is `CompositeAlphaMode::Auto`
+    #[inline]
+    pub fn alpha_mode(mut self, alpha_mode: CompositeAlphaMode) -> Self {
+        self.alpha_mode = alpha_mode;
         self
     }
 
@@ -1025,7 +1017,7 @@ pub const fn matrix<const COLUMNS: usize>(
 ///
 /// }
 ///
-pub trait WindowSize: HasRawWindowHandle {
+pub trait WindowSize: HasRawWindowHandle + HasRawDisplayHandle {
     /// Returns the size of the window in the format (width, height)
     fn window_size(&self) -> (u32, u32);
 }
@@ -1048,10 +1040,16 @@ impl ROSurface<'_> {
         self.0.get_supported_formats(self.1)
     }
 
-    /// See [Surface::get_supported_modes]
+    /// See [Surface::get_supported_present_modes]
     #[inline]
-    pub fn get_supported_modes(&self) -> Vec<PresentMode> {
-        self.0.get_supported_modes(self.1)
+    pub fn get_supported_present_modes(&self) -> Vec<PresentMode> {
+        self.0.get_supported_present_modes(self.1)
+    }
+
+    /// See [Surface::get_supported_alpha_modes]
+    #[inline]
+    pub fn get_supported_alpha_modes(&self) -> Vec<CompositeAlphaMode> {
+        self.0.get_supported_alpha_modes(self.1)
     }
 }
 
