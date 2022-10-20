@@ -28,20 +28,78 @@ use wgpu::{
     TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
 };
 
-pub struct State {
+pub trait DataSrc {
+    fn surface(&self) -> &Surface;
+
+    fn adapter(&self) -> &Adapter;
+
+    fn device(&self) -> &Device;
+
+    fn queue(&self) -> &Queue;
+
+    fn config(&self) -> &RwLock<SurfaceConfiguration>;
+
+    fn set_surface_texture_alive(&self, val: bool);
+
+    fn get_surface_texture_alive(&self) -> bool;
+}
+
+pub struct DirectDataSrc {
     surface: Surface,
-    pub adapter: Adapter, // can be used by api users to acquire information
+    pub adapter: Adapter,
+    // can be used by api users to acquire information
     pub device: Device,
     pub queue: Queue,
-    config: RwLock<SurfaceConfiguration>, // FIXME: should we use a Mutex instead?
+    config: RwLock<SurfaceConfiguration>,
+    // FIXME: should we use a Mutex instead?
     surface_texture_alive: AtomicBool, // FIXME: should we use a Mutex instead cuz it can spin and thus save cycles?
 }
 
-impl State {
+impl DataSrc for DirectDataSrc {
+    #[inline(always)]
+    fn surface(&self) -> &Surface {
+        &self.surface
+    }
+
+    #[inline(always)]
+    fn adapter(&self) -> &Adapter {
+        &self.adapter
+    }
+
+    #[inline(always)]
+    fn device(&self) -> &Device {
+        &self.device
+    }
+
+    #[inline(always)]
+    fn queue(&self) -> &Queue {
+        &self.queue
+    }
+
+    #[inline(always)]
+    fn config(&self) -> &RwLock<SurfaceConfiguration> {
+        &self.config
+    }
+
+    fn set_surface_texture_alive(&self, val: bool) {
+        self.surface_texture_alive.store(val, Ordering::Release);
+    }
+
+    fn get_surface_texture_alive(&self) -> bool {
+        self.surface_texture_alive.load(Ordering::Acquire)
+    }
+}
+
+pub struct State<D: DataSrc = DirectDataSrc> {
+    data_src: D,
+}
+
+impl State<DirectDataSrc> {
     /// Tries to create a new `State` from a `StateBuilder`
     ///
     /// returns either the newly created state or an error if
     /// requesting an adapter or device fails.
+    #[cfg(not(feature = "custom_data"))]
     pub async fn new<T: WindowSize>(builder: StateBuilder<'_, T>) -> anyhow::Result<Self> {
         let window = builder
             .window
@@ -49,7 +107,7 @@ impl State {
         let size = window.window_size();
         // The instance is a handle to our GPU
         let instance = Instance::new(builder.backends); // used to create adapters and surfaces
-        let surface = unsafe { instance.create_surface(&window) };
+        let surface = unsafe { instance.create_surface(&window) }; // FIXME: add safety comment
         let adapter = instance // adapter is a handle to our graphics card
             .request_adapter(&RequestAdapterOptions {
                 power_preference: builder.power_pref,
@@ -84,15 +142,25 @@ impl State {
             surface.configure(&device, &config);
 
             return Ok(Self {
-                surface,
-                adapter,
-                device,
-                queue,
-                config: RwLock::new(config),
-                surface_texture_alive: Default::default(),
+                data_src: DirectDataSrc {
+                    surface,
+                    adapter,
+                    device,
+                    queue,
+                    config: RwLock::new(config),
+                    surface_texture_alive: Default::default(),
+                },
             });
         }
         Err(AnyError::from(NoSuitableAdapterFoundError))
+    }
+}
+
+impl<D: DataSrc> State<D> {
+    /// Creates a new `State` from a `DataSrc`
+    #[cfg(feature = "custom_data")]
+    pub fn new(data_src: D) -> Self {
+        Self { data_src }
     }
 
     /// Creates a new pipeline layout from its bind group layouts and
@@ -103,7 +171,8 @@ impl State {
         bind_group_layouts: &[&BindGroupLayout],
         push_constant_ranges: &[PushConstantRange],
     ) -> PipelineLayout {
-        self.device
+        self.data_src
+            .device()
             .create_pipeline_layout(&PipelineLayoutDescriptor {
                 #[cfg(feature = "debug_labels")]
                 label,
@@ -124,7 +193,8 @@ impl State {
             .vertex_shader
             .expect("vertex shader has to be specified before building the pipeline");
 
-        self.device
+        self.data_src
+            .device()
             .create_render_pipeline(&RenderPipelineDescriptor {
                 #[cfg(feature = "debug_labels")]
                 label: builder.label,
@@ -160,24 +230,28 @@ impl State {
         #[cfg(feature = "debug_labels")] label: Label,
         src: ShaderSource,
     ) -> ShaderModule {
-        self.device.create_shader_module(ShaderModuleDescriptor {
-            #[cfg(feature = "debug_labels")]
-            label,
-            #[cfg(not(feature = "debug_labels"))]
-            label: None,
-            source: src,
-        })
+        self.data_src
+            .device()
+            .create_shader_module(ShaderModuleDescriptor {
+                #[cfg(feature = "debug_labels")]
+                label,
+                #[cfg(not(feature = "debug_labels"))]
+                label: None,
+                source: src,
+            })
     }
 
     /// Returns whether the resizing succeeded or not
     pub fn resize(&self, size: impl Into<(u32, u32)>) -> bool {
         let size = size.into();
         if size.0 > 0 && size.1 > 0 {
-            let mut config = self.config.write();
+            let mut config = self.data_src.config().write();
             config.width = size.0;
             config.height = size.1;
             // FIXME: should we verify that there exist no old textures?
-            self.surface.configure(&self.device, &*config);
+            self.data_src
+                .surface()
+                .configure(self.data_src.device(), &config);
             true
         } else {
             false
@@ -187,26 +261,27 @@ impl State {
     /// Initiates the rendering process, the passed callback gets
     /// called once all the required state is set up and
     /// once it ran, all the required steps to proceed get executed.
-    pub fn render<F: FnOnce(&TextureView, CommandEncoder, &State) -> CommandEncoder>(
+    pub fn render<F: FnOnce(&TextureView, CommandEncoder, &State<D>) -> CommandEncoder>(
         &self,
         callback: F,
         surface_view_desc: &TextureViewDescriptor,
     ) -> Result<(), SurfaceError> {
-        self.surface_texture_alive.store(true, Ordering::Release);
-        let output = self.surface.get_current_texture()?;
+        self.data_src.set_surface_texture_alive(true);
+        let output = self.data_src.surface().get_current_texture()?;
         // get a view of the current texture in order to render on it
         let view = output.texture.create_view(surface_view_desc);
 
         let encoder = self
-            .device
+            .data_src
+            .device()
             .create_command_encoder(&CommandEncoderDescriptor::default());
         // let the user do stuff with the encoder
         let encoder = callback(&view, encoder, self);
 
-        self.queue.submit(once(encoder.finish()));
+        self.data_src.queue().submit(once(encoder.finish()));
 
         output.present();
-        self.surface_texture_alive.store(false, Ordering::Release);
+        self.data_src.set_surface_texture_alive(false);
 
         Ok(())
     }
@@ -227,23 +302,25 @@ impl State {
 
     /// Returns the size defined in the config
     pub fn size(&self) -> (u32, u32) {
-        let config = self.config.read();
+        let config = self.data_src.config().read();
         (config.width, config.height)
     }
 
     /// Returns the surface's current format
     pub fn format(&self) -> TextureFormat {
-        let config = self.config.read();
+        let config = self.data_src.config().read();
         config.format
     }
 
     /// Tries to update the present mode of the surface.
     /// Returns whether update succeeded or not
     pub fn try_update_present_mode(&self, present_mode: PresentMode) -> bool {
-        if !self.surface_texture_alive.load(Ordering::Acquire) {
-            let mut config = self.config.write();
+        if !self.data_src.get_surface_texture_alive() {
+            let mut config = self.data_src.config().write();
             config.present_mode = present_mode;
-            self.surface.configure(&self.device, &*config);
+            self.data_src
+                .surface()
+                .configure(self.data_src.device(), &config);
             true
         } else {
             false
@@ -258,16 +335,39 @@ impl State {
         }
     }
 
+    /// Returns a reference to the device
+    pub fn device(&self) -> &Device {
+        self.data_src.device()
+    }
+
+    /// Returns a reference to the queue
+    pub fn queue(&self) -> &Queue {
+        self.data_src.queue()
+    }
+
+    /// Returns a reference to the adapter
+    pub fn adapter(&self) -> &Adapter {
+        self.data_src.adapter()
+    }
+
+    /// SAFETY: The caller has to ensure that the alive state
+    /// passed to the function correctly reflects the actual
+    /// liveliness of the surface texture
+    #[cfg(feature = "custom_data")]
+    pub unsafe fn set_surface_texture_alive(&self, alive: bool) {
+        self.data_src.set_surface_texture_alive(alive);
+    }
+
     /// Returns a reference to the surface
     #[inline]
-    pub const fn surface(&self) -> ROSurface {
-        ROSurface(&self.surface, &self.adapter)
+    pub fn surface(&self) -> ROSurface {
+        ROSurface(self.data_src.surface(), self.data_src.adapter())
     }
 
     /// Returns a reference to the surface's config.
     /// NOTE: This function is only intended to be used with apis
     pub fn raw_inner_surface_config(&self) -> SurfaceConfigurationRef<'_> {
-        SurfaceConfigurationRef(self.config.read())
+        SurfaceConfigurationRef(self.data_src.config().read())
     }
 
     /// Helper method to create a buffer from its content and usage
@@ -278,14 +378,16 @@ impl State {
         usage: BufferUsages,
     ) -> Buffer {
         // FIXME: should we switch from Pod to NoUninit?
-        self.device.create_buffer_init(&BufferInitDescriptor {
-            #[cfg(feature = "debug_labels")]
-            label,
-            #[cfg(not(feature = "debug_labels"))]
-            label: None,
-            contents: bytemuck::cast_slice(content),
-            usage,
-        })
+        self.data_src
+            .device()
+            .create_buffer_init(&BufferInitDescriptor {
+                #[cfg(feature = "debug_labels")]
+                label,
+                #[cfg(not(feature = "debug_labels"))]
+                label: None,
+                contents: bytemuck::cast_slice(content),
+                usage,
+            })
     }
 
     /// Helper method to create a texture from its builder
@@ -305,7 +407,7 @@ impl State {
             .inner
             .format
             .expect("format has to be specified before building the texture");
-        let diffuse_texture = self.device.create_texture(&TextureDescriptor {
+        let diffuse_texture = self.data_src.device().create_texture(&TextureDescriptor {
             // All textures are stored as 3D, we represent our 2D texture
             // by setting depth to 1.
             size: texture_size,
@@ -324,7 +426,7 @@ impl State {
             #[cfg(not(feature = "debug_labels"))]
             label: None,
         });
-        self.queue.write_texture(
+        self.data_src.queue().write_texture(
             // Tells wgpu where to copy the pixel data
             ImageCopyTexture {
                 texture: &diffuse_texture,
@@ -362,7 +464,7 @@ impl State {
             .format
             .expect("format has to be specified before building the texture");
 
-        self.device.create_texture(&TextureDescriptor {
+        self.data_src.device().create_texture(&TextureDescriptor {
             // All textures are stored as 3D, we represent our 2D texture
             // by setting depth to 1.
             size: texture_size,
@@ -390,7 +492,8 @@ impl State {
         #[cfg(feature = "debug_labels")] label: Label,
         entries: &[BindGroupLayoutEntry],
     ) -> BindGroupLayout {
-        self.device
+        self.data_src
+            .device()
             .create_bind_group_layout(&BindGroupLayoutDescriptor {
                 #[cfg(feature = "debug_labels")]
                 label,
@@ -407,19 +510,22 @@ impl State {
         layout: &BindGroupLayout,
         entries: &[BindGroupEntry],
     ) -> BindGroup {
-        self.device.create_bind_group(&BindGroupDescriptor {
-            #[cfg(feature = "debug_labels")]
-            label,
-            #[cfg(not(feature = "debug_labels"))]
-            label: None,
-            layout,
-            entries,
-        })
+        self.data_src
+            .device()
+            .create_bind_group(&BindGroupDescriptor {
+                #[cfg(feature = "debug_labels")]
+                label,
+                #[cfg(not(feature = "debug_labels"))]
+                label: None,
+                layout,
+                entries,
+            })
     }
 
     /// Helper method to write data to a buffer at a specific offset
     pub fn write_buffer<T: Pod>(&self, buffer: &Buffer, offset: BufferAddress, data: &[T]) {
-        self.queue
+        self.data_src
+            .queue()
             .write_buffer(buffer, offset, bytemuck::cast_slice(data));
     }
 
@@ -440,7 +546,7 @@ impl State {
             format,
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT,
         };
-        self.device.create_texture(&texture_desc)
+        self.data_src.device().create_texture(&texture_desc)
     }
 }
 
@@ -515,7 +621,7 @@ impl<'a> PipelineBuilder<'a> {
     }
 
     #[inline]
-    pub fn build(self, state: &State) -> RenderPipeline {
+    pub fn build<D: DataSrc>(self, state: &State<D>) -> RenderPipeline {
         state.create_pipeline(self)
     }
 }
@@ -542,7 +648,7 @@ pub enum ShaderModuleSources<'a> {
 }
 
 impl<'a> ShaderModuleSources<'a> {
-    fn into_modules(self, state: &'a State) -> ShaderModules {
+    fn into_modules<D: DataSrc>(self, state: &'a State<D>) -> ShaderModules {
         match self {
             ShaderModuleSources::Single(src) => ShaderModules::Single(src.into_module(state)),
             ShaderModuleSources::Multi(vertex_src, fragment_src) => ShaderModules::Multi(
@@ -560,7 +666,7 @@ pub enum ModuleSrc<'a> {
 
 impl<'a> ModuleSrc<'a> {
     #[cfg(feature = "debug_labels")]
-    fn into_module(self, state: &'a State) -> MaybeOwnedModule<'a> {
+    fn into_module<D: DataSrc>(self, state: &'a State<D>) -> MaybeOwnedModule<'a> {
         match self {
             ModuleSrc::Source(src, label) => {
                 MaybeOwnedModule::Owned(state.create_shader(src, label))
@@ -570,7 +676,7 @@ impl<'a> ModuleSrc<'a> {
     }
 
     #[cfg(not(feature = "debug_labels"))]
-    fn into_module(self, state: &'a State) -> MaybeOwnedModule<'a> {
+    fn into_module<D: DataSrc>(self, state: &'a State<D>) -> MaybeOwnedModule<'a> {
         match self {
             ModuleSrc::Source(src) => MaybeOwnedModule::Owned(state.create_shader(src)),
             ModuleSrc::Ref(reference) => MaybeOwnedModule::Ref(reference),
@@ -631,7 +737,7 @@ impl MaybeOwnedModule<'_> {
     fn shader_ref(&self) -> &ShaderModule {
         match self {
             MaybeOwnedModule::Owned(owned) => owned,
-            MaybeOwnedModule::Ref(reference) => *reference,
+            MaybeOwnedModule::Ref(reference) => reference,
         }
     }
 }
@@ -748,7 +854,7 @@ impl<'a> RawTextureBuilder<'a> {
     }
 
     #[inline]
-    pub fn build(self, state: &State) -> Texture {
+    pub fn build<D: DataSrc>(self, state: &State<D>) -> Texture {
         state.create_raw_texture(self)
     }
 }
@@ -841,11 +947,12 @@ impl<'a> TextureBuilder<'a> {
     }
 
     #[inline]
-    pub fn build(self, state: &State) -> Texture {
+    pub fn build<D: DataSrc>(self, state: &State<D>) -> Texture {
         state.create_texture(self)
     }
 }
 
+#[cfg(not(feature = "custom_data"))]
 pub struct StateBuilder<'a, T: WindowSize> {
     window: Option<&'a T>,
     power_pref: PowerPreference,      // we have a default
@@ -856,6 +963,7 @@ pub struct StateBuilder<'a, T: WindowSize> {
     alpha_mode: CompositeAlphaMode,   // we have a default
 }
 
+#[cfg(not(feature = "custom_data"))]
 impl<T: WindowSize> Default for StateBuilder<'_, T> {
     fn default() -> Self {
         Self {
@@ -870,6 +978,7 @@ impl<T: WindowSize> Default for StateBuilder<'_, T> {
     }
 }
 
+#[cfg(not(feature = "custom_data"))]
 impl<'a, T: WindowSize> StateBuilder<'a, T> {
     #[inline]
     pub fn new() -> Self {
@@ -1058,7 +1167,7 @@ pub struct SurfaceConfigurationRef<'a>(RwLockReadGuard<'a, RawRwLock, SurfaceCon
 
 impl AsRef<SurfaceConfiguration> for SurfaceConfigurationRef<'_> {
     fn as_ref(&self) -> &SurfaceConfiguration {
-        &*self.0
+        &self.0
     }
 }
 
@@ -1066,6 +1175,6 @@ impl Deref for SurfaceConfigurationRef<'_> {
     type Target = SurfaceConfiguration;
 
     fn deref(&self) -> &Self::Target {
-        &*self.0
+        &self.0
     }
 }

@@ -16,6 +16,8 @@ categories = ["graphics", "rendering", "game-development"]
 winit = ["dep:winit"]
 # Certain functions will take an additional debug label argument
 debug_labels = []
+# Allows for a manual supply of instances of wgpu's basic components
+custom_data = []
 
 [dependencies]
 wgpu = "0.14"
