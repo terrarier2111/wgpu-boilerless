@@ -13,20 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 #[cfg(feature = "debug_labels")]
 use wgpu::Label;
-use wgpu::{
-    Adapter, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
-    BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer, BufferAddress, BufferUsages,
-    ColorTargetState, CommandEncoder, CommandEncoderDescriptor, CompositeAlphaMode,
-    DepthStencilState, Device, DeviceDescriptor, Extent3d, Features, FragmentState,
-    ImageCopyTexture, ImageDataLayout, Instance, Limits, MultisampleState, Origin3d,
-    PipelineLayout, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState,
-    PushConstantRange, Queue, RenderPass, RenderPassColorAttachment,
-    RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline,
-    RenderPipelineDescriptor, RequestAdapterOptions, ShaderModule, ShaderModuleDescriptor,
-    ShaderSource, Surface, SurfaceConfiguration, SurfaceError, Texture, TextureAspect,
-    TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView,
-    TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
-};
+use wgpu::{Adapter, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer, BufferAddress, BufferUsages, ColorTargetState, CommandEncoder, CommandEncoderDescriptor, CompositeAlphaMode, DepthStencilState, Device, DeviceDescriptor, Dx12Compiler, Extent3d, Features, FragmentState, ImageCopyTexture, ImageDataLayout, Instance, InstanceDescriptor, Limits, MultisampleState, Origin3d, PipelineLayout, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, PushConstantRange, Queue, RenderPass, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, ShaderModule, ShaderModuleDescriptor, ShaderSource, Surface, SurfaceConfiguration, SurfaceError, Texture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState};
 
 pub trait DataSrc {
     fn surface(&self) -> &Surface;
@@ -106,8 +93,11 @@ impl State<DirectDataSrc> {
             .expect("window has to be specified before building the state");
         let size = window.window_size();
         // The instance is a handle to our GPU
-        let instance = Instance::new(builder.backends); // used to create adapters and surfaces
-        let surface = unsafe { instance.create_surface(&window) }; // FIXME: add safety comment
+        let instance = Instance::new(InstanceDescriptor {
+            backends: builder.backends,
+            dx12_shader_compiler: Dx12Compiler::Fxc, // TODO: support this!
+        }); // used to create adapters and surfaces
+        let surface = unsafe { instance.create_surface(&window)? }; // FIXME: add safety comment
         let adapter = instance // adapter is a handle to our graphics card
             .request_adapter(&RequestAdapterOptions {
                 power_preference: builder.power_pref,
@@ -130,7 +120,7 @@ impl State<DirectDataSrc> {
             // use the specified format, if none is provided, fallback to the preferred format
             let format = builder
                 .format
-                .unwrap_or_else(|| surface.get_supported_formats(&adapter)[0]);
+                .unwrap_or_else(|| surface.get_capabilities(&adapter).formats[0]);
             let config = SurfaceConfiguration {
                 usage: TextureUsages::RENDER_ATTACHMENT,
                 format,
@@ -138,6 +128,7 @@ impl State<DirectDataSrc> {
                 height: size.0,
                 present_mode: builder.present_mode,
                 alpha_mode: builder.alpha_mode,
+                view_formats: vec![], // TODO: support this!
             };
             surface.configure(&device, &config);
 
@@ -425,6 +416,7 @@ impl<D: DataSrc> State<D> {
             label: builder.inner.label,
             #[cfg(not(feature = "debug_labels"))]
             label: None,
+            view_formats: &[], // TODO: support this!
         });
         self.data_src.queue().write_texture(
             // Tells wgpu where to copy the pixel data
@@ -483,6 +475,7 @@ impl<D: DataSrc> State<D> {
             label: builder.label,
             #[cfg(not(feature = "debug_labels"))]
             label: None,
+            view_formats: &[], // TODO: support this!
         })
     }
 
@@ -545,6 +538,7 @@ impl<D: DataSrc> State<D> {
             dimension: TextureDimension::D2,
             format,
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
         };
         self.data_src.device().create_texture(&texture_desc)
     }
@@ -669,7 +663,7 @@ impl<'a> ModuleSrc<'a> {
     fn into_module<D: DataSrc>(self, state: &'a State<D>) -> MaybeOwnedModule<'a> {
         match self {
             ModuleSrc::Source(src, label) => {
-                MaybeOwnedModule::Owned(state.create_shader(src, label))
+                MaybeOwnedModule::Owned(state.create_shader(label, src))
             }
             ModuleSrc::Ref(reference) => MaybeOwnedModule::Ref(reference),
         }
@@ -1143,22 +1137,22 @@ impl WindowSize for winit::window::Window {
 pub struct ROSurface<'a>(&'a Surface, &'a Adapter);
 
 impl ROSurface<'_> {
-    /// See [Surface::get_supported_formats]
+    /// See [Surface::get_capabilities]
     #[inline]
     pub fn get_supported_formats(&self) -> Vec<TextureFormat> {
-        self.0.get_supported_formats(self.1)
+        self.0.get_capabilities(self.1).formats
     }
 
-    /// See [Surface::get_supported_present_modes]
+    /// See [Surface::get_capabilities]
     #[inline]
     pub fn get_supported_present_modes(&self) -> Vec<PresentMode> {
-        self.0.get_supported_present_modes(self.1)
+        self.0.get_capabilities(self.1).present_modes
     }
 
-    /// See [Surface::get_supported_alpha_modes]
+    /// See [Surface::get_capabilities]
     #[inline]
     pub fn get_supported_alpha_modes(&self) -> Vec<CompositeAlphaMode> {
-        self.0.get_supported_alpha_modes(self.1)
+        self.0.get_capabilities(self.1).alpha_modes
     }
 }
 
