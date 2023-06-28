@@ -20,9 +20,9 @@ debug_labels = []
 custom_data = []
 
 [dependencies]
-wgpu = "0.15.1"
-bytemuck = { version = "1.12", features = ["derive"] }
+wgpu = "0.16"
+bytemuck = { version = "1.13", features = ["derive"] }
 parking_lot = "0.12"
 anyhow = "1.0"
-raw-window-handle = "0.5.0"
-winit = { version = "0.28.1", optional = true }
+raw-window-handle = "0.5"
+winit = { version = "0.28", optional = true }

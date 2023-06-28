@@ -433,8 +433,8 @@ impl<D: DataSrc> State<D> {
             // The layout of the texture
             ImageDataLayout {
                 offset: 0,
-                bytes_per_row: NonZeroU32::new(format.describe().block_size as u32 * dimensions.0),
-                rows_per_image: NonZeroU32::new(dimensions.1),
+                bytes_per_row: Some(format.block_size(Some(builder.aspect)).unwrap() * dimensions.0),
+                rows_per_image: Some(dimensions.1),
             },
             texture_size,
         );
