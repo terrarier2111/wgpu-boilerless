@@ -13,7 +13,20 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 #[cfg(feature = "debug_labels")]
 use wgpu::Label;
-use wgpu::{Adapter, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer, BufferAddress, BufferUsages, ColorTargetState, CommandEncoder, CommandEncoderDescriptor, CompositeAlphaMode, DepthStencilState, Device, DeviceDescriptor, Dx12Compiler, Extent3d, Features, FragmentState, ImageCopyTexture, ImageDataLayout, Instance, InstanceDescriptor, Limits, MultisampleState, Origin3d, PipelineLayout, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, PushConstantRange, Queue, RenderPass, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, ShaderModule, ShaderModuleDescriptor, ShaderSource, Surface, SurfaceConfiguration, SurfaceError, Texture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState};
+use wgpu::{
+    Adapter, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
+    BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer, BufferAddress, BufferUsages,
+    ColorTargetState, CommandEncoder, CommandEncoderDescriptor, CompositeAlphaMode,
+    DepthStencilState, Device, DeviceDescriptor, Dx12Compiler, Extent3d, Features, FragmentState,
+    ImageCopyTexture, ImageDataLayout, Instance, InstanceDescriptor, Limits, MultisampleState,
+    Origin3d, PipelineLayout, PipelineLayoutDescriptor, PowerPreference, PresentMode,
+    PrimitiveState, PushConstantRange, Queue, RenderPass, RenderPassColorAttachment,
+    RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline,
+    RenderPipelineDescriptor, RequestAdapterOptions, ShaderModule, ShaderModuleDescriptor,
+    ShaderSource, Surface, SurfaceConfiguration, SurfaceError, Texture, TextureAspect,
+    TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView,
+    TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
+};
 
 pub trait DataSrc {
     fn surface(&self) -> &Surface;
@@ -433,7 +446,9 @@ impl<D: DataSrc> State<D> {
             // The layout of the texture
             ImageDataLayout {
                 offset: 0,
-                bytes_per_row: Some(format.block_size(Some(builder.aspect)).unwrap() * dimensions.0),
+                bytes_per_row: Some(
+                    format.block_size(Some(builder.aspect)).unwrap() * dimensions.0,
+                ),
                 rows_per_image: Some(dimensions.1),
             },
             texture_size,
