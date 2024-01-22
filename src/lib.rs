@@ -2,7 +2,7 @@ use anyhow::Error as AnyError;
 use bytemuck::Pod;
 use parking_lot::lock_api::RwLockReadGuard;
 use parking_lot::{RawRwLock, RwLock};
-use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::iter::once;
@@ -10,6 +10,7 @@ use std::marker::PhantomData;
 use std::num::NonZeroU32;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 #[cfg(feature = "debug_labels")]
 use wgpu::Label;
@@ -45,7 +46,7 @@ pub trait DataSrc {
 }
 
 pub struct DirectDataSrc {
-    surface: Surface,
+    surface: Surface<'static>,
     pub adapter: Adapter,
     // can be used by api users to acquire information
     pub device: Device,
@@ -53,6 +54,7 @@ pub struct DirectDataSrc {
     config: RwLock<SurfaceConfiguration>,
     // FIXME: should we use a Mutex instead?
     surface_texture_alive: AtomicBool, // FIXME: should we use a Mutex instead cuz it can spin and thus save cycles?
+    window_handle: *const dyn WindowSize,
 }
 
 impl DataSrc for DirectDataSrc {
@@ -90,6 +92,14 @@ impl DataSrc for DirectDataSrc {
     }
 }
 
+impl Drop for DirectDataSrc {
+    fn drop(&mut self) {
+        unsafe {
+            Arc::from_raw(self.window_handle);
+        } // FIXME: add safety comment
+    }
+}
+
 pub struct State<D: DataSrc = DirectDataSrc> {
     data_src: D,
 }
@@ -100,7 +110,9 @@ impl State<DirectDataSrc> {
     /// returns either the newly created state or an error if
     /// requesting an adapter or device fails.
     #[cfg(not(feature = "custom_data"))]
-    pub async fn new<T: WindowSize>(builder: StateBuilder<'_, T>) -> anyhow::Result<Self> {
+    pub async fn new(builder: StateBuilder) -> anyhow::Result<Self> {
+        use wgpu::{Gles3MinorVersion, InstanceFlags};
+
         let window = builder
             .window
             .expect("window has to be specified before building the state");
@@ -109,8 +121,11 @@ impl State<DirectDataSrc> {
         let instance = Instance::new(InstanceDescriptor {
             backends: builder.backends,
             dx12_shader_compiler: Dx12Compiler::Fxc, // TODO: support this!
+            flags: InstanceFlags::empty(),           // TODO: support this!
+            gles_minor_version: Gles3MinorVersion::Automatic, // TODO: support this!
         }); // used to create adapters and surfaces
-        let surface = unsafe { instance.create_surface(&window)? }; // FIXME: add safety comment
+        let handle = Arc::into_raw(window);
+        let surface = unsafe { instance.create_surface(handle.as_ref().unwrap_unchecked())? }; // FIXME: add safety comment
         let adapter = instance // adapter is a handle to our graphics card
             .request_adapter(&RequestAdapterOptions {
                 power_preference: builder.power_pref,
@@ -123,8 +138,8 @@ impl State<DirectDataSrc> {
                 .request_device(
                     &DeviceDescriptor {
                         label: None,
-                        features: builder.requirements.features,
-                        limits: builder.requirements.limits,
+                        required_features: builder.requirements.features,
+                        required_limits: builder.requirements.limits,
                     },
                     None,
                 )
@@ -141,7 +156,8 @@ impl State<DirectDataSrc> {
                 height: size.0,
                 present_mode: builder.present_mode,
                 alpha_mode: builder.alpha_mode,
-                view_formats: vec![], // TODO: support this!
+                view_formats: vec![],             // TODO: support this!
+                desired_maximum_frame_latency: 2, // TODO: support this!
             };
             surface.configure(&device, &config);
 
@@ -153,6 +169,7 @@ impl State<DirectDataSrc> {
                     queue,
                     config: RwLock::new(config),
                     surface_texture_alive: Default::default(),
+                    window_handle: handle,
                 },
             });
         }
@@ -291,16 +308,18 @@ impl<D: DataSrc> State<D> {
     }
 
     /// Helper method to create a render pass in the encoder
-    pub fn create_render_pass<'a>(
+    pub fn create_render_pass<'b>(
         &self,
-        encoder: &'a mut CommandEncoder,
-        color_attachments: &'a [Option<RenderPassColorAttachment<'a>>],
-        depth_stencil_attachment: Option<RenderPassDepthStencilAttachment<'a>>,
-    ) -> RenderPass<'a> {
+        encoder: &'b mut CommandEncoder,
+        color_attachments: &'b [Option<RenderPassColorAttachment<'b>>],
+        depth_stencil_attachment: Option<RenderPassDepthStencilAttachment<'b>>,
+    ) -> RenderPass<'b> {
         encoder.begin_render_pass(&RenderPassDescriptor {
             label: None,
             color_attachments,
             depth_stencil_attachment,
+            timestamp_writes: None,
+            occlusion_query_set: None, // TODO: is this needed?
         })
     }
 
@@ -447,7 +466,7 @@ impl<D: DataSrc> State<D> {
             ImageDataLayout {
                 offset: 0,
                 bytes_per_row: Some(
-                    format.block_size(Some(builder.aspect)).unwrap() * dimensions.0,
+                    format.block_copy_size(Some(builder.aspect)).unwrap() * dimensions.0,
                 ),
                 rows_per_image: Some(dimensions.1),
             },
@@ -630,7 +649,7 @@ impl<'a> PipelineBuilder<'a> {
     }
 
     #[inline]
-    pub fn build<D: DataSrc>(self, state: &State<D>) -> RenderPipeline {
+    pub fn build<'b, D: DataSrc>(self, state: &State<D>) -> RenderPipeline {
         state.create_pipeline(self)
     }
 }
@@ -657,7 +676,7 @@ pub enum ShaderModuleSources<'a> {
 }
 
 impl<'a> ShaderModuleSources<'a> {
-    fn into_modules<D: DataSrc>(self, state: &'a State<D>) -> ShaderModules {
+    fn into_modules<D: DataSrc>(self, state: &'a State<D>) -> ShaderModules<'a> {
         match self {
             ShaderModuleSources::Single(src) => ShaderModules::Single(src.into_module(state)),
             ShaderModuleSources::Multi(vertex_src, fragment_src) => ShaderModules::Multi(
@@ -962,8 +981,8 @@ impl<'a> TextureBuilder<'a> {
 }
 
 #[cfg(not(feature = "custom_data"))]
-pub struct StateBuilder<'a, T: WindowSize> {
-    window: Option<&'a T>,
+pub struct StateBuilder {
+    window: Option<Arc<dyn WindowSize>>,
     power_pref: PowerPreference,      // we have a default
     present_mode: PresentMode,        // we have a default
     requirements: DeviceRequirements, // we have a default
@@ -973,7 +992,7 @@ pub struct StateBuilder<'a, T: WindowSize> {
 }
 
 #[cfg(not(feature = "custom_data"))]
-impl<T: WindowSize> Default for StateBuilder<'_, T> {
+impl Default for StateBuilder {
     fn default() -> Self {
         Self {
             backends: Backends::all(),
@@ -988,13 +1007,13 @@ impl<T: WindowSize> Default for StateBuilder<'_, T> {
 }
 
 #[cfg(not(feature = "custom_data"))]
-impl<'a, T: WindowSize> StateBuilder<'a, T> {
+impl StateBuilder {
     #[inline]
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn window(mut self, window: &'a T) -> Self {
+    pub fn window(mut self, window: Arc<dyn WindowSize>) -> Self {
         self.window = Some(window);
         self
     }
@@ -1135,7 +1154,7 @@ pub const fn matrix<const COLUMNS: usize>(
 ///
 /// }
 ///
-pub trait WindowSize: HasRawWindowHandle + HasRawDisplayHandle {
+pub trait WindowSize: Send + Sync + HasWindowHandle + HasDisplayHandle {
     /// Returns the size of the window in the format (width, height)
     fn window_size(&self) -> (u32, u32);
 }
@@ -1149,7 +1168,7 @@ impl WindowSize for winit::window::Window {
 }
 
 /// this is a read-only version of the Surface struct
-pub struct ROSurface<'a>(&'a Surface, &'a Adapter);
+pub struct ROSurface<'a>(&'a Surface<'a>, &'a Adapter);
 
 impl ROSurface<'_> {
     /// See [Surface::get_capabilities]
