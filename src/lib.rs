@@ -54,7 +54,7 @@ pub struct DirectDataSrc {
     config: RwLock<SurfaceConfiguration>,
     // FIXME: should we use a Mutex instead?
     surface_texture_alive: AtomicBool, // FIXME: should we use a Mutex instead cuz it can spin and thus save cycles?
-    window_handle: *const dyn WindowSize,
+    window_handle: SendSyncPtr<dyn WindowSize>,
 }
 
 impl DataSrc for DirectDataSrc {
@@ -95,7 +95,7 @@ impl DataSrc for DirectDataSrc {
 impl Drop for DirectDataSrc {
     fn drop(&mut self) {
         unsafe {
-            Arc::from_raw(self.window_handle);
+            Arc::from_raw(self.window_handle.0);
         } // FIXME: add safety comment
     }
 }
@@ -169,7 +169,7 @@ impl State<DirectDataSrc> {
                     queue,
                     config: RwLock::new(config),
                     surface_texture_alive: Default::default(),
-                    window_handle: handle,
+                    window_handle: SendSyncPtr(handle),
                 },
             });
         }
@@ -1206,3 +1206,10 @@ impl Deref for SurfaceConfigurationRef<'_> {
         &self.0
     }
 }
+
+#[repr(transparent)]
+struct SendSyncPtr<T: ?Sized>(*const T);
+
+unsafe impl<T: ?Sized> Send for SendSyncPtr<T> {}
+
+unsafe impl<T: ?Sized> Sync for SendSyncPtr<T> {}
