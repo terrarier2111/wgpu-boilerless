@@ -308,12 +308,12 @@ impl<D: DataSrc> State<D> {
     }
 
     /// Helper method to create a render pass in the encoder
-    pub fn create_render_pass<'b>(
+    pub fn create_render_pass<'a>(
         &self,
-        encoder: &'b mut CommandEncoder,
-        color_attachments: &'b [Option<RenderPassColorAttachment<'b>>],
-        depth_stencil_attachment: Option<RenderPassDepthStencilAttachment<'b>>,
-    ) -> RenderPass<'b> {
+        encoder: &'a mut CommandEncoder,
+        color_attachments: &'a [Option<RenderPassColorAttachment<'a>>],
+        depth_stencil_attachment: Option<RenderPassDepthStencilAttachment<'a>>,
+    ) -> RenderPass<'a> {
         encoder.begin_render_pass(&RenderPassDescriptor {
             label: None,
             color_attachments,
@@ -649,7 +649,7 @@ impl<'a> PipelineBuilder<'a> {
     }
 
     #[inline]
-    pub fn build<'b, D: DataSrc>(self, state: &State<D>) -> RenderPipeline {
+    pub fn build<D: DataSrc>(self, state: &State<D>) -> RenderPipeline {
         state.create_pipeline(self)
     }
 }
