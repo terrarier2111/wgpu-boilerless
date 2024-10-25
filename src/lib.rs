@@ -15,18 +15,7 @@ use wgpu::util::{BufferInitDescriptor, DeviceExt};
 #[cfg(feature = "debug_labels")]
 use wgpu::Label;
 use wgpu::{
-    Adapter, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
-    BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer, BufferAddress, BufferUsages,
-    ColorTargetState, CommandEncoder, CommandEncoderDescriptor, CompositeAlphaMode,
-    DepthStencilState, Device, DeviceDescriptor, Dx12Compiler, Extent3d, Features, FragmentState,
-    ImageCopyTexture, ImageDataLayout, Instance, InstanceDescriptor, Limits, MultisampleState,
-    Origin3d, PipelineLayout, PipelineLayoutDescriptor, PowerPreference, PresentMode,
-    PrimitiveState, PushConstantRange, Queue, RenderPass, RenderPassColorAttachment,
-    RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline,
-    RenderPipelineDescriptor, RequestAdapterOptions, ShaderModule, ShaderModuleDescriptor,
-    ShaderSource, Surface, SurfaceConfiguration, SurfaceError, Texture, TextureAspect,
-    TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView,
-    TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
+    Adapter, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer, BufferAddress, BufferUsages, ColorTargetState, CommandEncoder, CommandEncoderDescriptor, CompositeAlphaMode, DepthStencilState, Device, DeviceDescriptor, Dx12Compiler, Extent3d, Features, FragmentState, ImageCopyTexture, ImageDataLayout, Instance, InstanceDescriptor, Limits, MultisampleState, Origin3d, PipelineCompilationOptions, PipelineLayout, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, PushConstantRange, Queue, RenderPass, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, ShaderModule, ShaderModuleDescriptor, ShaderSource, Surface, SurfaceConfiguration, SurfaceError, Texture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState
 };
 
 pub trait DataSrc {
@@ -140,6 +129,7 @@ impl State<DirectDataSrc> {
                         label: None,
                         required_features: builder.requirements.features,
                         required_limits: builder.requirements.limits,
+                        memory_hints: wgpu::MemoryHints::default(), // FIXME: add this as a proper option
                     },
                     None,
                 )
@@ -230,6 +220,7 @@ impl<D: DataSrc> State<D> {
                     module: shaders.vertex_module(),
                     entry_point: vertex_shader.entry_point,
                     buffers: vertex_shader.buffers,
+                    compilation_options: PipelineCompilationOptions::default() // FIXME: add this as a proper option
                 },
                 fragment: builder
                     .fragment_shader
@@ -237,11 +228,13 @@ impl<D: DataSrc> State<D> {
                         module: shaders.fragment_module(),
                         entry_point: fragment_shader.entry_point,
                         targets: fragment_shader.targets,
+                        compilation_options: PipelineCompilationOptions::default() // FIXME: add this as a proper option
                     }),
                 primitive: builder.primitive,
                 depth_stencil: builder.depth_stencil,
                 multisample: builder.multisample,
                 multiview: builder.multiview,
+                cache: None, // FIXME: add this as a proper option
             })
     }
 
